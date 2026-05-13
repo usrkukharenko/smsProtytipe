@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:padding="20dp">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:padding="24dp"
+        android:elevation="2dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SMS Gateway"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="@color/ios_label"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Шлюз для отправки СМС-кодов"
+            android:textSize="15sp"
+            android:textColor="@color/ios_gray"
+            android:layout_marginBottom="28dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="URL сервера"
+            android:textSize="13sp"
+            android:textColor="@color/ios_gray"
+            android:layout_marginBottom="6dp" />
+
+        <EditText
+            android:id="@+id/etServerUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://your-app.vercel.app"
+            android:inputType="textUri"
+            android:padding="14dp"
+            android:background="@color/ios_gray6"
+            android:textSize="15sp"
+            android:textColor="@color/ios_label"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Gateway-токен"
+            android:textSize="13sp"
+            android:textColor="@color/ios_gray"
+            android:layout_marginBottom="6dp" />
+
+        <EditText
+            android:id="@+id/etGatewayToken"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Тот же, что GATEWAY_TOKEN на Vercel"
+            android:inputType="textPassword"
+            android:padding="14dp"
+            android:background="@color/ios_gray6"
+            android:textSize="15sp"
+            android:textColor="@color/ios_label"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Интервал опроса (сек)"
+            android:textSize="13sp"
+            android:textColor="@color/ios_gray"
+            android:layout_marginBottom="6dp" />
+
+        <EditText
+            android:id="@+id/etInterval"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="3"
+            android:inputType="number"
+            android:padding="14dp"
+            android:background="@color/ios_gray6"
+            android:textSize="15sp"
+            android:textColor="@color/ios_label"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btnToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Запустить"
+            android:textSize="17sp"
+            android:textColor="@color/white"
+            android:textStyle="bold"
+            android:padding="14dp"
+            android:backgroundTint="@color/ios_blue"
+            android:layout_marginBottom="20dp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Остановлен"
+            android:textSize="14sp"
+            android:textColor="@color/ios_gray"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:padding="12dp"
+            android:background="@color/ios_gray6"
+            android:fontFamily="monospace"
+            android:textSize="11sp"
+            android:textColor="@color/ios_label"
+            android:text="" />
+
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,36 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+
+# Next.js
+web/.next/
+web/out/
+web/.vercel/
+
+# Env (никогда не коммитить)
+.env
+.env.local
+web/.env
+web/.env.local
+
+# Android
+android/.gradle/
+android/.idea/
+android/local.properties
+android/build/
+android/app/build/
+android/captures/
+android/*.iml
+android/app/*.iml
+android/app/release/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+*.swp
+
+# Claude Code runtime
+.claude/
