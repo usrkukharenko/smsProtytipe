@@ -6,10 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.text.format.DateFormat
 import android.view.View
 import android.widget.AdapterView
@@ -19,9 +17,11 @@ import android.widget.EditText
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -41,9 +41,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvLog: TextView
 
+    // System-permissions section
+    private lateinit var tvBatteryStatus: TextView
+    private lateinit var btnBatteryOpen: Button
+    private lateinit var tvAutostartStatus: TextView
+    private lateinit var btnAutostartOpen: Button
+    private lateinit var swBlockCalls: SwitchCompat
+    private lateinit var tvBlockCallsStatus: TextView
+    private lateinit var btnBlockCallsAssign: Button
+    private lateinit var tvBlockCallsHint: TextView
+
     private val logLines = ArrayDeque<String>()
     private val simSubIds = mutableListOf<Int>()
     private var suppressSpinnerCallback = true
+    private var suppressBlockCallsSwitch = false
 
     private val logReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -67,6 +78,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    private val callScreeningLauncher: ActivityResultLauncher<Intent> =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            // The system writes the new role state asynchronously; refresh
+            // the UI either way so the user sees the result.
+            refreshCallScreeningStatus()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -80,12 +98,53 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvLog = findViewById(R.id.tvLog)
 
+        tvBatteryStatus = findViewById(R.id.tvBatteryStatus)
+        btnBatteryOpen = findViewById(R.id.btnBatteryOpen)
+        tvAutostartStatus = findViewById(R.id.tvAutostartStatus)
+        btnAutostartOpen = findViewById(R.id.btnAutostartOpen)
+        swBlockCalls = findViewById(R.id.swBlockCalls)
+        tvBlockCallsStatus = findViewById(R.id.tvBlockCallsStatus)
+        btnBlockCallsAssign = findViewById(R.id.btnBlockCallsAssign)
+        tvBlockCallsHint = findViewById(R.id.tvBlockCallsHint)
+
         etServerUrl.setText(Prefs.getServerUrl(this))
         etGatewayToken.setText(Prefs.getToken(this))
         etInterval.setText(Prefs.getIntervalSec(this).toString())
 
         btnToggle.setOnClickListener { onToggle() }
         btnShareLog.setOnClickListener { shareLog() }
+
+        btnBatteryOpen.setOnClickListener {
+            BatteryHelper.requestIgnore(this)
+        }
+        btnAutostartOpen.setOnClickListener {
+            AutostartHelper.open(this)
+        }
+        btnBlockCallsAssign.setOnClickListener {
+            CallScreeningRoleHelper.requestCallScreeningRole(this, callScreeningLauncher)
+        }
+
+        // Hide autostart row controls on devices that don't need them.
+        if (!AutostartHelper.isLikelyVendorWithAutostart()) {
+            tvAutostartStatus.visibility = View.GONE
+            btnAutostartOpen.visibility = View.GONE
+            // Also hide the row label by walking up to its parent row;
+            // we leave the structure to keep IDs stable across devices.
+        }
+
+        // Init block-calls switch state from prefs (without firing listener).
+        suppressBlockCallsSwitch = true
+        swBlockCalls.isChecked = Prefs.getBlockCallsWhenActive(this)
+        suppressBlockCallsSwitch = false
+
+        swBlockCalls.setOnCheckedChangeListener { _, isChecked ->
+            if (suppressBlockCallsSwitch) return@setOnCheckedChangeListener
+            Prefs.setBlockCallsWhenActive(this, isChecked)
+            if (isChecked && !CallScreeningRoleHelper.isCallScreeningRoleHeld(this)) {
+                showAssignCallScreeningDialog()
+            }
+            refreshCallScreeningStatus()
+        }
 
         spSim.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -109,12 +168,18 @@ class MainActivity : AppCompatActivity() {
 
         scheduleWatchdog()
         refreshStatus()
+        refreshBatteryStatus()
+        refreshAutostartStatus()
+        refreshCallScreeningStatus()
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
-        maybeShowBatteryPrompt()
+        refreshBatteryStatus()
+        refreshAutostartStatus()
+        refreshCallScreeningStatus()
+        maybeShowOnboardingPrompts()
     }
 
     override fun onDestroy() {
@@ -230,26 +295,59 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun maybeShowBatteryPrompt() {
-        if (Prefs.getSeenBatteryPrompt(this)) return
-        Prefs.setSeenBatteryPrompt(this, true)
-        AlertDialog.Builder(this)
-            .setTitle("Оптимизация батареи")
-            .setMessage("Для надёжной работы шлюза отключите оптимизацию батареи для этого приложения")
-            .setPositiveButton("Открыть настройки") { _, _ ->
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    try {
-                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                    } catch (_: Exception) {
-                    }
+    /**
+     * One-time onboarding dialogs. Battery prompt runs first; autostart
+     * prompt only fires after the battery dialog is gone (or had already
+     * been seen) so they don't stack on top of each other.
+     */
+    private fun maybeShowOnboardingPrompts() {
+        if (!Prefs.getSeenBatteryPrompt(this)) {
+            Prefs.setSeenBatteryPrompt(this, true)
+            AlertDialog.Builder(this)
+                .setTitle("Оптимизация батареи")
+                .setMessage("Для надёжной работы шлюза отключите оптимизацию батареи для этого приложения")
+                .setPositiveButton("Открыть настройки") { d, _ ->
+                    BatteryHelper.requestIgnore(this)
+                    d.dismiss()
+                    maybeShowAutostartPrompt()
                 }
+                .setNegativeButton("Позже") { d, _ ->
+                    d.dismiss()
+                    maybeShowAutostartPrompt()
+                }
+                .setOnCancelListener { maybeShowAutostartPrompt() }
+                .show()
+            return
+        }
+        maybeShowAutostartPrompt()
+    }
+
+    private fun maybeShowAutostartPrompt() {
+        if (Prefs.getSeenAutostartPrompt(this)) return
+        if (!AutostartHelper.isLikelyVendorWithAutostart()) {
+            // Mark as seen anyway so we don't keep checking on every resume.
+            Prefs.setSeenAutostartPrompt(this, true)
+            return
+        }
+        Prefs.setSeenAutostartPrompt(this, true)
+        AlertDialog.Builder(this)
+            .setTitle("Автозапуск")
+            .setMessage("Чтобы шлюз не выгружался производителем, разрешите автозапуск в системных настройках")
+            .setPositiveButton("Открыть настройки") { _, _ ->
+                AutostartHelper.open(this)
             }
             .setNegativeButton("Позже", null)
+            .show()
+    }
+
+    private fun showAssignCallScreeningDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Блокировка вызовов")
+            .setMessage("Для блокировки звонков нужно назначить приложение блокировщиком вызовов в системе. Откроется системный диалог.")
+            .setPositiveButton("Назначить") { _, _ ->
+                CallScreeningRoleHelper.requestCallScreeningRole(this, callScreeningLauncher)
+            }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
@@ -281,6 +379,64 @@ class MainActivity : AppCompatActivity() {
             this,
             if (running) R.color.ios_red else R.color.ios_blue
         )
+    }
+
+    private fun refreshBatteryStatus() {
+        val ignoring = BatteryHelper.isIgnoringBatteryOptimizations(this)
+        tvBatteryStatus.text = if (ignoring) "отключена ✓" else "включена ⚠"
+        tvBatteryStatus.setTextColor(
+            ContextCompat.getColor(
+                this,
+                if (ignoring) R.color.ios_green else R.color.ios_red
+            )
+        )
+        btnBatteryOpen.isEnabled = !ignoring
+        btnBatteryOpen.alpha = if (ignoring) 0.5f else 1.0f
+    }
+
+    private fun refreshAutostartStatus() {
+        if (!AutostartHelper.isLikelyVendorWithAutostart()) {
+            tvAutostartStatus.visibility = View.GONE
+            btnAutostartOpen.visibility = View.GONE
+            return
+        }
+        tvAutostartStatus.visibility = View.VISIBLE
+        btnAutostartOpen.visibility = View.VISIBLE
+        val hasIntent = AutostartHelper.findAutostartIntent(this) != null
+        if (hasIntent) {
+            tvAutostartStatus.text = "доступно"
+            tvAutostartStatus.setTextColor(
+                ContextCompat.getColor(this, R.color.ios_label)
+            )
+        } else {
+            tvAutostartStatus.text = "не найдено"
+            tvAutostartStatus.setTextColor(
+                ContextCompat.getColor(this, R.color.ios_gray)
+            )
+        }
+    }
+
+    private fun refreshCallScreeningStatus() {
+        val held = CallScreeningRoleHelper.isCallScreeningRoleHeld(this)
+        tvBlockCallsStatus.text =
+            if (held) "Назначено блокировщиком звонков ✓" else "Не назначено ⚠"
+        tvBlockCallsStatus.setTextColor(
+            ContextCompat.getColor(
+                this,
+                if (held) R.color.ios_green else R.color.ios_red
+            )
+        )
+        btnBlockCallsAssign.isEnabled = !held
+        btnBlockCallsAssign.alpha = if (held) 0.5f else 1.0f
+
+        // Keep the switch in sync in case prefs changed externally
+        // (e.g. tests, settings reset, etc.).
+        val prefEnabled = Prefs.getBlockCallsWhenActive(this)
+        if (swBlockCalls.isChecked != prefEnabled) {
+            suppressBlockCallsSwitch = true
+            swBlockCalls.isChecked = prefEnabled
+            suppressBlockCallsSwitch = false
+        }
     }
 
     private fun appendLog(line: String) {

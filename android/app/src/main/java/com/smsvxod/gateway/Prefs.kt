@@ -13,6 +13,8 @@ object Prefs {
     private const val KEY_SUBSCRIPTION_ID = "subscription_id"
     private const val KEY_DEVICE_ID = "device_id"
     private const val KEY_SEEN_BATTERY_PROMPT = "seen_battery_prompt"
+    private const val KEY_SEEN_AUTOSTART_PROMPT = "seen_autostart_prompt"
+    private const val KEY_BLOCK_CALLS_WHEN_ACTIVE = "block_calls_when_active"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -65,5 +67,19 @@ object Prefs {
 
     fun setSeenBatteryPrompt(ctx: Context, value: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_SEEN_BATTERY_PROMPT, value).apply()
+    }
+
+    fun getSeenAutostartPrompt(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_SEEN_AUTOSTART_PROMPT, false)
+
+    fun setSeenAutostartPrompt(ctx: Context, value: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_SEEN_AUTOSTART_PROMPT, value).apply()
+    }
+
+    fun getBlockCallsWhenActive(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_BLOCK_CALLS_WHEN_ACTIVE, false)
+
+    fun setBlockCallsWhenActive(ctx: Context, value: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_BLOCK_CALLS_WHEN_ACTIVE, value).apply()
     }
 }

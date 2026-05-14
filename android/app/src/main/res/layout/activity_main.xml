@@ -129,6 +129,147 @@
             android:backgroundTint="@color/ios_gray"
             android:layout_marginBottom="20dp" />
 
+        <!-- ===== Системные разрешения ===== -->
+        <LinearLayout
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/ios_gray6"
+            android:padding="16dp"
+            android:layout_marginBottom="20dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Системные разрешения"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:textColor="@color/ios_label"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Battery optimization row -->
+            <LinearLayout
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Оптимизация батареи"
+                    android:textSize="14sp"
+                    android:textColor="@color/ios_label" />
+
+                <TextView
+                    android:id="@+id/tvBatteryStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textSize="13sp"
+                    android:textColor="@color/ios_gray" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnBatteryOpen"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Открыть настройки"
+                android:textSize="14sp"
+                android:textColor="@color/white"
+                android:padding="10dp"
+                android:backgroundTint="@color/ios_blue"
+                android:layout_marginBottom="16dp" />
+
+            <!-- Autostart row -->
+            <LinearLayout
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Автозапуск (Xiaomi/Huawei/etc.)"
+                    android:textSize="14sp"
+                    android:textColor="@color/ios_label" />
+
+                <TextView
+                    android:id="@+id/tvAutostartStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textSize="13sp"
+                    android:textColor="@color/ios_gray" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnAutostartOpen"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Открыть настройки производителя"
+                android:textSize="14sp"
+                android:textColor="@color/white"
+                android:padding="10dp"
+                android:backgroundTint="@color/ios_blue"
+                android:layout_marginBottom="16dp" />
+
+            <!-- Block incoming calls row -->
+            <LinearLayout
+                android:orientation="horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Блокировка входящих звонков"
+                    android:textSize="14sp"
+                    android:textColor="@color/ios_label" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/swBlockCalls"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvBlockCallsStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="—"
+                android:textSize="13sp"
+                android:textColor="@color/ios_gray"
+                android:layout_marginBottom="6dp" />
+
+            <Button
+                android:id="@+id/btnBlockCallsAssign"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Назначить блокировщиком"
+                android:textSize="14sp"
+                android:textColor="@color/white"
+                android:padding="10dp"
+                android:backgroundTint="@color/ios_blue"
+                android:layout_marginBottom="6dp" />
+
+            <TextView
+                android:id="@+id/tvBlockCallsHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Звонки будут отклоняться без гудка и уведомлений, пока шлюз активен. Android 10+."
+                android:textSize="12sp"
+                android:textColor="@color/ios_gray" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
