@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Resolve a value from gradle.properties first, then env var, else null.
+fun propOrEnv(name: String): String? {
+    val fromProp = (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+    if (fromProp != null) return fromProp
+    return System.getenv(name)?.takeIf { it.isNotBlank() }
 }
 
 android {
@@ -15,10 +24,40 @@ android {
         versionName = "1.0"
     }
 
+    // To create a real release keystore, run:
+    //   keytool -genkey -v -keystore release.keystore -alias smsvxod \
+    //           -keyalg RSA -keysize 2048 -validity 10000
+    // Then set in gradle.properties (or env vars) RELEASE_STORE_FILE,
+    // RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD.
+    signingConfigs {
+        create("release") {
+            val storeFilePath = propOrEnv("RELEASE_STORE_FILE")
+            val storePass = propOrEnv("RELEASE_STORE_PASSWORD")
+            val alias = propOrEnv("RELEASE_KEY_ALIAS")
+            val keyPass = propOrEnv("RELEASE_KEY_PASSWORD")
+
+            if (storeFilePath != null && storePass != null && alias != null && keyPass != null) {
+                storeFile = file(storeFilePath)
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
+            } else {
+                // Fallback to debug keystore so the release task is still runnable for tests.
+                val debugStore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+                if (debugStore.exists()) {
+                    storeFile = debugStore
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -40,6 +79,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.lifecycle:lifecycle-service:2.8.6")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

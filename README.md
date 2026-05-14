@@ -25,7 +25,77 @@
 smsVxod/
 ├── web/         # Next.js 15 — фронт + API
 ├── android/     # Kotlin-приложение (шлюз на телефоне)
+├── scripts/     # backup.sh и прочая обслуга
+├── docker-compose.yml
+├── Makefile
 └── README.md
+```
+
+## Запуск локально через Docker
+
+Полный стек (Next.js + Postgres + Redis + ntfy + бэкап БД) поднимается одной командой на твоём ПК. Ни VPS, ни домена, ни HTTPS не нужно.
+
+### Зависимости
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (включает `docker compose`)
+- `make` (опционально — без него работают эквивалентные `docker compose`-команды, см. ниже)
+
+### Первый запуск
+
+```bash
+cp .env.example .env
+# либо `make init` — он сам скопирует и сгенерирует JWT_SECRET / GATEWAY_TOKEN / ALTCHA_HMAC_KEY
+```
+
+Если генеришь секреты вручную, для каждого из `JWT_SECRET`, `GATEWAY_TOKEN`, `ALTCHA_HMAC_KEY`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# либо: openssl rand -hex 32
+```
+
+Подними стек и накати миграции БД:
+
+```bash
+make up         # docker compose up -d
+make migrate    # docker compose --profile tools run --rm db-migrate
+```
+
+### Доступы
+
+| Что | Где |
+|---|---|
+| Веб-приложение | http://localhost:3000 |
+| ntfy (push-уведомления) | http://localhost:8888 |
+| Postgres | только внутри docker-сети (хочешь снаружи — раскомментируй `ports:` под `postgres` в `docker-compose.yml`) |
+| Redis | только внутри docker-сети |
+
+### Подписка на ntfy с телефона
+
+1. Поставь приложение **ntfy** ([Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy) / [F-Droid](https://f-droid.org/packages/io.heckel.ntfy/))
+2. Add subscription → Use another server → `http://<IP-твоего-ПК-в-локалке>:8888`
+3. Topic — то значение, что в `NTFY_TOPIC` из `.env` (по умолчанию `smsvxod-alerts`)
+
+IP в локальной сети можно посмотреть в Системных настройках → Сеть, или командой `ipconfig getifaddr en0` на macOS. Телефон должен быть в той же Wi-Fi-сети, что и ПК.
+
+### Полезные команды
+
+| `make ...` | эквивалент `docker compose ...` | что делает |
+|---|---|---|
+| `make up` | `docker compose up -d` | поднять стек в фоне |
+| `make down` | `docker compose down` | остановить |
+| `make restart` | `docker compose down && docker compose up -d` | перезапуск |
+| `make rebuild` | `docker compose build --no-cache && docker compose up -d` | пересобрать образ web с нуля |
+| `make logs` | `docker compose logs -f` | смотреть логи |
+| `make ps` | `docker compose ps` | какие сервисы запущены |
+| `make migrate` | `docker compose --profile tools run --rm db-migrate` | накатить миграции drizzle |
+| `make psql` | `docker compose exec postgres psql -U smsvxod -d smsvxod` | psql-шелл в БД |
+| `make backup` | `docker compose exec db-backup /backup.sh` | ручной бэкап БД сейчас |
+
+Бэкапы складываются в named volume `smsvxod_backups` (`pg_dump | gzip`, раз в час, хранятся 7 дней). Достать наружу:
+
+```bash
+docker compose cp db-backup:/backups ./backups-local
 ```
 
 ## 1. Запуск веб-приложения

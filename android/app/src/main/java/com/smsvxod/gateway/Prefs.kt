@@ -2,6 +2,7 @@ package com.smsvxod.gateway
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.UUID
 
 object Prefs {
     private const val NAME = "smsvxod_gateway_prefs"
@@ -9,6 +10,9 @@ object Prefs {
     private const val KEY_TOKEN = "gateway_token"
     private const val KEY_INTERVAL = "poll_interval_sec"
     private const val KEY_AUTOSTART = "autostart"
+    private const val KEY_SUBSCRIPTION_ID = "subscription_id"
+    private const val KEY_DEVICE_ID = "device_id"
+    private const val KEY_SEEN_BATTERY_PROMPT = "seen_battery_prompt"
 
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
@@ -39,5 +43,27 @@ object Prefs {
 
     fun setAutostart(ctx: Context, value: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_AUTOSTART, value).apply()
+    }
+
+    fun getSubscriptionId(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_SUBSCRIPTION_ID, -1)
+
+    fun setSubscriptionId(ctx: Context, value: Int) {
+        prefs(ctx).edit().putInt(KEY_SUBSCRIPTION_ID, value).apply()
+    }
+
+    fun getDeviceId(ctx: Context): String {
+        val existing = prefs(ctx).getString(KEY_DEVICE_ID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val generated = UUID.randomUUID().toString()
+        prefs(ctx).edit().putString(KEY_DEVICE_ID, generated).apply()
+        return generated
+    }
+
+    fun getSeenBatteryPrompt(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(KEY_SEEN_BATTERY_PROMPT, false)
+
+    fun setSeenBatteryPrompt(ctx: Context, value: Boolean) {
+        prefs(ctx).edit().putBoolean(KEY_SEEN_BATTERY_PROMPT, value).apply()
     }
 }

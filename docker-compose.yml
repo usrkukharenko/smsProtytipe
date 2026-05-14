@@ -1,0 +1,135 @@
+name: smsvxod
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smsvxod
+      POSTGRES_USER: smsvxod
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsvxod}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # By default, postgres is reachable only on the internal network.
+    # To expose it to the host, set PORT_POSTGRES=5432 (or another port) in .env
+    # and uncomment the ports section below.
+    # ports:
+    #   - "${PORT_POSTGRES:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smsvxod -d smsvxod"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - smsvxod_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - smsvxod_net
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    restart: unless-stopped
+    command: ["serve"]
+    environment:
+      NTFY_BASE_URL: http://localhost:8888
+      NTFY_LISTEN_HTTP: ":80"
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_BEHIND_PROXY: "false"
+      NTFY_ATTACHMENT_CACHE_DIR: /var/cache/ntfy/attachments
+      NTFY_ENABLE_LOGIN: "false"
+    volumes:
+      - ntfy_data:/var/cache/ntfy
+      - ntfy_etc:/var/lib/ntfy
+    ports:
+      - "${NTFY_PORT:-8888}:80"
+    networks:
+      - smsvxod_net
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://smsvxod:${POSTGRES_PASSWORD:-smsvxod}@postgres:5432/smsvxod
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+      ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY}
+      NTFY_URL: http://ntfy
+      NTFY_TOPIC: ${NTFY_TOPIC:-smsvxod-alerts}
+      PUBLIC_URL: http://localhost:3000
+      NODE_ENV: production
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    networks:
+      - smsvxod_net
+
+  db-migrate:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    profiles: ["tools"]
+    command: ["npx", "drizzle-kit", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://smsvxod:${POSTGRES_PASSWORD:-smsvxod}@postgres:5432/smsvxod
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      GATEWAY_TOKEN: ${GATEWAY_TOKEN}
+      ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY}
+      NTFY_URL: http://ntfy
+      NTFY_TOPIC: ${NTFY_TOPIC:-smsvxod-alerts}
+      PUBLIC_URL: http://localhost:3000
+      NODE_ENV: production
+    networks:
+      - smsvxod_net
+
+  db-backup:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      PGHOST: postgres
+      PGUSER: smsvxod
+      PGDATABASE: smsvxod
+      PGPASSWORD: ${POSTGRES_PASSWORD:-smsvxod}
+    volumes:
+      - backups:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "while true; do /backup.sh; sleep 3600; done"]
+    networks:
+      - smsvxod_net
+
+networks:
+  smsvxod_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  ntfy_data:
+  ntfy_etc:
+  backups:

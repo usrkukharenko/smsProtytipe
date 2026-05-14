@@ -73,6 +73,22 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:text="SIM-карта"
+            android:textSize="13sp"
+            android:textColor="@color/ios_gray"
+            android:layout_marginBottom="6dp" />
+
+        <Spinner
+            android:id="@+id/spSim"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="14dp"
+            android:background="@color/ios_gray6"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Интервал опроса (сек)"
             android:textSize="13sp"
             android:textColor="@color/ios_gray"
@@ -100,6 +116,17 @@
             android:textStyle="bold"
             android:padding="14dp"
             android:backgroundTint="@color/ios_blue"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btnShareLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Поделиться логом"
+            android:textSize="15sp"
+            android:textColor="@color/white"
+            android:padding="12dp"
+            android:backgroundTint="@color/ios_gray"
             android:layout_marginBottom="20dp" />
 
         <TextView

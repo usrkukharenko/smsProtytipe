@@ -155,6 +155,7 @@ export default function VerifyPage() {
                 }}
                 type="text"
                 inputMode="numeric"
+                autoComplete="one-time-code"
                 maxLength={CODE_LEN}
                 value={d}
                 onChange={(e) => setDigit(i, e.target.value)}

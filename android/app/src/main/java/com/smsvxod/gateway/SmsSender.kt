@@ -15,7 +15,30 @@ object SmsSender {
 
     private const val ACTION_SENT = "com.smsvxod.gateway.SMS_SENT"
 
-    suspend fun send(context: Context, phone: String, text: String): Result<Unit> =
+    @Suppress("DEPRECATION")
+    private fun getSmsManager(context: Context, subscriptionId: Int): SmsManager {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val systemSms = context.getSystemService(SmsManager::class.java)
+            if (subscriptionId != -1) {
+                systemSms.createForSubscriptionId(subscriptionId)
+            } else {
+                systemSms
+            }
+        } else {
+            if (subscriptionId != -1) {
+                SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+            } else {
+                SmsManager.getDefault()
+            }
+        }
+    }
+
+    suspend fun send(
+        context: Context,
+        phone: String,
+        text: String,
+        subscriptionId: Int = -1
+    ): Result<Unit> =
         suspendCancellableCoroutine { cont ->
             val requestId = UUID.randomUUID().toString()
             val intent = Intent(ACTION_SENT).apply {
@@ -59,12 +82,7 @@ object SmsSender {
             }
 
             try {
-                val sms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    context.getSystemService(SmsManager::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    SmsManager.getDefault()
-                }
+                val sms = getSmsManager(context, subscriptionId)
                 val parts = sms.divideMessage(text)
                 if (parts.size > 1) {
                     val sentList = ArrayList<PendingIntent>(parts.size)

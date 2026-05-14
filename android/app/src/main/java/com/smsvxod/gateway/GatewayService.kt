@@ -26,6 +26,7 @@ class GatewayService : LifecycleService() {
         const val EXTRA_LOG_LINE = "line"
         const val NOTIF_CHANNEL_ID = "gateway_channel"
         const val NOTIF_ID = 1001
+        private const val HEARTBEAT_INTERVAL_MS = 30_000L
 
         @Volatile var isRunning: Boolean = false
             private set
@@ -56,6 +57,9 @@ class GatewayService : LifecycleService() {
         lifecycleScope.launch(Dispatchers.IO) {
             pollLoop()
         }
+        lifecycleScope.launch(Dispatchers.IO) {
+            heartbeatLoop()
+        }
     }
 
     private fun stopWork() {
@@ -70,6 +74,7 @@ class GatewayService : LifecycleService() {
             val baseUrl = Prefs.getServerUrl(this)
             val token = Prefs.getToken(this)
             val intervalSec = Prefs.getIntervalSec(this).coerceAtLeast(1)
+            val subId = Prefs.getSubscriptionId(this)
 
             if (baseUrl.isBlank() || token.isBlank()) {
                 log("Не заданы URL или токен")
@@ -84,7 +89,7 @@ class GatewayService : LifecycleService() {
                     log("Получено задач: ${tasks.size}")
                     val results = mutableListOf<GatewayApi.SendResult>()
                     for (t in tasks) {
-                        val r = SmsSender.send(applicationContext, t.phone, t.text)
+                        val r = SmsSender.send(applicationContext, t.phone, t.text, subId)
                         if (r.isSuccess) {
                             log("СМС → ${t.phone}: ok")
                             results.add(GatewayApi.SendResult(t.id, true))
@@ -108,7 +113,32 @@ class GatewayService : LifecycleService() {
         }
     }
 
+    private suspend fun heartbeatLoop() {
+        while (isRunning && lifecycleScope.isActive) {
+            val baseUrl = Prefs.getServerUrl(this)
+            val token = Prefs.getToken(this)
+            if (baseUrl.isNotBlank() && token.isNotBlank()) {
+                try {
+                    val api = GatewayApi(baseUrl, token)
+                    val deviceId = Prefs.getDeviceId(this)
+                    val r = withContext(Dispatchers.IO) {
+                        Heartbeat.sendHeartbeat(api, applicationContext, deviceId)
+                    }
+                    if (r.isSuccess) {
+                        log("Heartbeat: ok")
+                    } else {
+                        log("Heartbeat: ${r.exceptionOrNull()?.message ?: "error"}")
+                    }
+                } catch (e: Exception) {
+                    log("Heartbeat: ${e.message}")
+                }
+            }
+            delay(HEARTBEAT_INTERVAL_MS)
+        }
+    }
+
     private fun log(line: String) {
+        FileLogger.log(applicationContext, "svc", line)
         val intent = Intent(ACTION_LOG).apply {
             setPackage(packageName)
             putExtra(EXTRA_LOG_LINE, line)

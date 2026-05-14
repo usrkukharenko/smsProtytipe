@@ -73,4 +73,29 @@ class GatewayApi(private val baseUrl: String, private val token: String) {
             }
         }
     }
+
+    fun heartbeat(
+        deviceId: String,
+        batteryLevel: Int?,
+        signalStrength: Int?,
+        simInfo: String?
+    ) {
+        val json = JSONObject().apply {
+            put("deviceId", deviceId)
+            if (batteryLevel != null) put("batteryLevel", batteryLevel)
+            if (signalStrength != null) put("signalStrength", signalStrength)
+            if (simInfo != null) put("simInfo", simInfo)
+        }
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
+            .url("$baseUrl/api/gateway/heartbeat")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw RuntimeException("heartbeat HTTP ${resp.code}")
+            }
+        }
+    }
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import AltchaWidget from "./AltchaWidget";
 
 function formatRussianPhone(value: string): string {
   const digits = value.replace(/\D/g, "").replace(/^[78]/, "").slice(0, 10);
@@ -25,6 +26,7 @@ export default function PhonePage() {
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -33,17 +35,22 @@ export default function PhonePage() {
 
   const digitsOnly = phone.replace(/\D/g, "");
   const isComplete = digitsOnly.length === 11 || digitsOnly.length === 10;
+  const canSubmit = isComplete && Boolean(altchaPayload) && !loading;
+
+  const handleAltcha = useCallback((payload: string | null) => {
+    setAltchaPayload(payload);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isComplete || loading) return;
+    if (!canSubmit) return;
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone, altcha: altchaPayload }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -103,13 +110,17 @@ export default function PhonePage() {
               disabled={loading}
             />
 
+            <div className="flex justify-center">
+              <AltchaWidget onSolved={handleAltcha} />
+            </div>
+
             {error && (
               <p className="text-[14px] text-ios-red px-1">{error}</p>
             )}
 
             <button
               type="submit"
-              disabled={!isComplete || loading}
+              disabled={!canSubmit}
               className="w-full bg-ios-blue hover:bg-ios-blueHover active:scale-[0.98] disabled:bg-ios-gray4 disabled:cursor-not-allowed text-white font-semibold py-4 rounded-2xl text-[17px] transition"
             >
               {loading ? "Отправка…" : "Получить код"}
