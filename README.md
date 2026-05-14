@@ -1,243 +1,317 @@
 # smsVxod — авторизация по СМС
 
-Вход на сайте по СМС-коду. Сайт стоит на Vercel, СМС отправляет твой Android-телефон.
+Вход на сайт по СМС-коду. СМС отправляет твой собственный Android-телефон, выступающий в роли шлюза. Всё работает локально на твоём ПК через Docker — без внешних сервисов, без капчи, без облачных СМС-провайдеров.
 
 ## Архитектура
 
 ```
-[Браузер]  ──POST /api/auth/request-code──▶  [Vercel: Next.js + KV]
+[Браузер] ──POST /api/auth/request-code──▶ [Next.js / Postgres / Redis]
                                                        │
-                                                       ├─ генерит код
-                                                       └─ кладёт задачу в очередь
+                                                       ├─ нормализация номера
+                                                       ├─ rate-limit (Redis)
+                                                       ├─ генерация 6-значного кода
+                                                       ├─ сохранение в Redis (TTL 5 мин)
+                                                       ├─ кладёт задачу в Redis-очередь
+                                                       └─ пишет audit_log в Postgres
 
-[Android-приложение] ──GET /api/sms/pending──▶ [Vercel]   (раз в 3 сек)
-[Android] отправляет СМС через SmsManager
-[Android] ──POST /api/sms/sent──▶ [Vercel]                (отчёт)
+[Android-приложение]  ──GET /api/sms/pending──▶  [сервер]   (poll каждые 3 сек)
+[Android]              отправляет СМС через SmsManager
+[Android]             ──POST /api/sms/sent──▶  [сервер]   (отчёт)
+[Android]             ──POST /api/gateway/heartbeat──▶  [сервер]   (раз в 30 сек)
 
-[Браузер]  ──POST /api/auth/verify-code──▶  [Vercel]
+[Браузер] ──POST /api/auth/verify-code──▶ [сервер]
                                                        │
-                                                       └─ выдаёт JWT в httpOnly cookie
+                                                       ├─ IP-rate-limit (10 за 15 мин → автобан)
+                                                       ├─ сверка кода
+                                                       └─ JWT в httpOnly cookie
 ```
 
 ## Структура
 
 ```
 smsVxod/
-├── web/         # Next.js 15 — фронт + API
-├── android/     # Kotlin-приложение (шлюз на телефоне)
-├── scripts/     # backup.sh и прочая обслуга
-├── docker-compose.yml
-├── Makefile
+├── web/                         # Next.js 15 (App Router) — фронт + API
+├── android/                     # Kotlin-приложение шлюза
+├── scripts/                     # backup.sh для pg_dump
+├── docker-compose.yml           # postgres + redis + ntfy + web + db-backup
+├── docker-compose.override.yml  # локальный режим (web нативно, без Docker Hub)
+├── Makefile                     # init/up/down/migrate/psql/backup/logs
+├── .env.example                 # шаблон секретов для compose
 └── README.md
 ```
 
-## Запуск локально через Docker
+## Что под капотом
 
-Полный стек (Next.js + Postgres + Redis + ntfy + бэкап БД) поднимается одной командой на твоём ПК. Ни VPS, ни домена, ни HTTPS не нужно.
+**Web (`web/`):**
+- Next.js 15 + TypeScript + Tailwind (Apple-style минимализм)
+- **Postgres 16** через **Drizzle ORM** — таблицы `users`, `auth_log`, `banned_ips`, `gateway_devices`, `sms_log`
+- **Redis 7** через **ioredis** (lazy-клиент) — TTL-коды, очередь СМС, rate-limit, last_seen шлюзов
+- **JWT** в `httpOnly` cookie на 7 дней
+- **Security headers** + **CSRF-friendly cookies** через middleware
+- **pino** structured logging
+- **ntfy** для self-hosted push-алертов (опционально)
+- Без капчи, без внешних SaaS
 
-### Зависимости
+**Android (`android/`):**
+- Kotlin, minSdk 26, Foreground Service + Coroutines polling
+- **Dual-SIM:** выбор симки в UI, `SmsManager.createForSubscriptionId`
+- **Heartbeat** каждые 30 сек с батареей, сигналом, оператором
+- **WorkManager watchdog** — перезапускает сервис каждые 15 мин если автозапуск включён
+- **Rotating-логи** на устройстве + share через FileProvider
+- **Системные разрешения:** оптимизация батареи, vendor-autostart (MIUI/EMUI/ColorOS/Vivo/Samsung), **блокировка входящих звонков** через `CallScreeningService`
+- Release-подпись через `gradle.properties`/env (fallback на debug)
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (включает `docker compose`)
-- `make` (опционально — без него работают эквивалентные `docker compose`-команды, см. ниже)
+**Инфраструктура:**
+- `docker-compose.yml` — Postgres + Redis + ntfy + web + db-backup (cron pg_dump каждый час, retention 7 дней)
+- `Makefile` для всех ежедневных операций
+- `.github/workflows/` — CI на каждый push (tsc + vitest + next build, gradle assembleDebug, релиз APK по тегу)
 
-### Первый запуск
+## 1. Локальный запуск (рекомендуемый сценарий)
+
+### 1.1 Подготовка
 
 ```bash
-cp .env.example .env
-# либо `make init` — он сам скопирует и сгенерирует JWT_SECRET / GATEWAY_TOKEN / ALTCHA_HMAC_KEY
+git clone git@github.com:usrkukharenko/smsProtytipe.git
+cd smsProtytipe
+make init           # сгенерирует .env с JWT_SECRET и GATEWAY_TOKEN
 ```
 
-Если генеришь секреты вручную, для каждого из `JWT_SECRET`, `GATEWAY_TOKEN`, `ALTCHA_HMAC_KEY`:
+После этого открой `.env` и при желании поправь:
+- `GATEWAY_TOKEN` — например на `token2026` для удобства ввода на телефоне
+- `NTFY_TOPIC` — название топика для алертов
+
+### 1.2 Запуск Postgres + Redis в Docker, web нативно
+
+Это режим из коробки в `docker-compose.override.yml` — нужен потому что Docker Hub бывает нестабилен с тяжёлым `node:20-alpine`.
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-# либо: openssl rand -hex 32
+# Поднять только БД и Redis (порты 5432 и 6379 опубликованы для localhost)
+docker compose up -d postgres redis
+
+# Накатить миграции БД (одна команда; работает потому что postgres опубликован)
+cd web
+DATABASE_URL='postgres://smsvxod:smsvxod-local@localhost:5432/smsvxod' \
+  npx drizzle-kit migrate
+cd ..
+
+# Запустить web нативно (подхватит env из .env)
+cd web
+DATABASE_URL='postgres://smsvxod:smsvxod-local@localhost:5432/smsvxod' \
+REDIS_URL='redis://localhost:6379' \
+JWT_SECRET="$(grep ^JWT_SECRET ../.env | cut -d= -f2)" \
+GATEWAY_TOKEN="$(grep ^GATEWAY_TOKEN ../.env | cut -d= -f2)" \
+NTFY_URL='' \
+HOSTNAME=0.0.0.0 \
+  npm run dev
 ```
 
-Подними стек и накати миграции БД:
+Открой `http://localhost:3000`. С телефона в той же WiFi — `http://<твой-ip>:3000` (`ifconfig | grep "inet 192"`).
+
+### 1.3 Полный Docker-стек (когда Docker Hub стабилен)
+
+Удали `docker-compose.override.yml` и запусти всё в Docker:
 
 ```bash
-make up         # docker compose up -d
-make migrate    # docker compose --profile tools run --rm db-migrate
+rm docker-compose.override.yml
+make up           # docker compose up -d
+make migrate      # docker compose --profile tools run --rm db-migrate
 ```
 
-### Доступы
+`make logs` — смотреть логи; `make psql` — открыть консоль БД; `make backup` — снять бэкап вручную; `make down` — выключить.
 
-| Что | Где |
-|---|---|
-| Веб-приложение | http://localhost:3000 |
-| ntfy (push-уведомления) | http://localhost:8888 |
-| Postgres | только внутри docker-сети (хочешь снаружи — раскомментируй `ports:` под `postgres` в `docker-compose.yml`) |
-| Redis | только внутри docker-сети |
+## 2. Android-приложение
 
-### Подписка на ntfy с телефона
+### 2.1 Сборка
 
-1. Поставь приложение **ntfy** ([Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy) / [F-Droid](https://f-droid.org/packages/io.heckel.ntfy/))
-2. Add subscription → Use another server → `http://<IP-твоего-ПК-в-локалке>:8888`
-3. Topic — то значение, что в `NTFY_TOPIC` из `.env` (по умолчанию `smsvxod-alerts`)
+```bash
+# Скачать Gradle 8.7 (если ещё нет)
+curl -L -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+mkdir -p ~/.local
+unzip -q -o /tmp/gradle.zip -d ~/.local/
+export PATH="$HOME/.local/gradle-8.7/bin:$PATH"
 
-IP в локальной сети можно посмотреть в Системных настройках → Сеть, или командой `ipconfig getifaddr en0` на macOS. Телефон должен быть в той же Wi-Fi-сети, что и ПК.
+# Собрать APK
+cd android
+gradle assembleDebug
+# APK: android/app/build/outputs/apk/debug/app-debug.apk
+```
 
-### Полезные команды
+Альтернатива — открыть `android/` в Android Studio и нажать Run.
 
-| `make ...` | эквивалент `docker compose ...` | что делает |
+### 2.2 Установка на телефон
+
+```bash
+~/Library/Android/sdk/platform-tools/adb install -r \
+  android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Или AirDrop/Telegram → APK → тапнуть «Установить».
+
+### 2.3 Настройка в приложении
+
+1. **URL сервера:** `http://<ip-твоего-компьютера>:3000` (без слеша в конце)
+2. **Gateway-токен:** значение из `.env`, поле `GATEWAY_TOKEN`
+3. **Интервал:** `3` секунды
+4. **SIM-карта:** выбрать слот, если используется Dual-SIM
+5. Нажать «Запустить» → разрешить **SEND_SMS, READ_PHONE_STATE, POST_NOTIFICATIONS**
+6. В секции **«Системные разрешения»**:
+   - «Открыть настройки» → отключить оптимизацию батареи
+   - «Открыть настройки производителя» (на Xiaomi/Huawei/etc.) → разрешить автозапуск
+   - Включить Switch **«Блокировка входящих звонков»** → согласиться с диалогом «Назначить блокировщиком» (Android 10+). Входящие будут отклоняться без гудка и уведомлений, пока шлюз активен.
+
+## 3. Лимиты (rate-limit и защита)
+
+| Ограничение | Значение | Где конфигурируется |
 |---|---|---|
-| `make up` | `docker compose up -d` | поднять стек в фоне |
-| `make down` | `docker compose down` | остановить |
-| `make restart` | `docker compose down && docker compose up -d` | перезапуск |
-| `make rebuild` | `docker compose build --no-cache && docker compose up -d` | пересобрать образ web с нуля |
-| `make logs` | `docker compose logs -f` | смотреть логи |
-| `make ps` | `docker compose ps` | какие сервисы запущены |
-| `make migrate` | `docker compose --profile tools run --rm db-migrate` | накатить миграции drizzle |
-| `make psql` | `docker compose exec postgres psql -U smsvxod -d smsvxod` | psql-шелл в БД |
-| `make backup` | `docker compose exec db-backup /backup.sh` | ручной бэкап БД сейчас |
+| Повторный запрос СМС на номер | не чаще 1 раза в 60 сек | `web/lib/rate-limit.ts` |
+| Запросов СМС на номер | максимум 5 в час | `web/lib/rate-limit.ts` |
+| Запросов СМС с одного IP | максимум 20 в час | `web/lib/rate-limit.ts` |
+| Verify-попыток с одного IP | 10 за 15 мин → автобан 15 мин | `web/app/api/auth/verify-code/route.ts` |
+| Попыток ввода кода | 3, потом код инвалидируется | `web/lib/codes.ts` |
+| Время жизни кода | 5 минут | `web/lib/codes.ts` |
+| Время жизни сессии | 7 дней | `web/lib/auth.ts` |
 
-Бэкапы складываются в named volume `smsvxod_backups` (`pg_dump | gzip`, раз в час, хранятся 7 дней). Достать наружу:
+## 4. Производительность и ёмкость
 
-```bash
-docker compose cp db-backup:/backups ./backups-local
-```
+Узкое место — **одна SIM-карта**, а не сервер. Реалистичные цифры:
 
-## 1. Запуск веб-приложения
+| Сценарий | Время на 1 СМС | Лимит оператора | Кому подходит |
+|---|---|---|---|
+| Одна SIM (текущий сетап) | 1–2 сек | ~50/час, ~200/день, дальше блок | внутренний продукт / друзья / тест |
+| 2 SIM в одном телефоне (Dual-SIM, поддерживается) | 1–2 сек | ~100/час | до 100 регистраций/час |
+| Несколько телефонов с пулом SIM | 1–2 сек × N | ~50/час × N | публичный сервис |
+| Платный SMS-провайдер (SMS.ru/Twilio) как фолбэк | <0.5 сек | 1000+ СМС/сек | прод-сервис |
 
-### 1.1 Локально
+Сам web (Next.js + Postgres + Redis на ноуте) держит **500–1000 RPS** на `request-code` — проблем с самим API не будет. Когда система упрётся — упрётся **в физическую отправку СМС с симки** и **антиспам оператора**.
+
+## 5. CI/CD
+
+В `.github/workflows/`:
+- `web.yml` — на push/PR с изменениями в `web/**`: `tsc --noEmit`, `vitest run`, `next build` с тестовыми env
+- `android.yml` — на push/PR с изменениями в `android/**`: `gradle assembleDebug`, артефакт APK
+- `release.yml` — на тег `v*`: `gradle assembleRelease` + GitHub Release с APK
+
+## 6. Тесты
 
 ```bash
 cd web
-npm install
-cp .env.example .env.local
-# отредактируй .env.local — задай JWT_SECRET и GATEWAY_TOKEN
-npm run dev
+npx vitest run                # юнит-тесты (phone, codes, auth, rate-limit)
+npx playwright install        # один раз — поставить браузеры
+npx playwright test           # e2e (требует поднятые Postgres + Redis)
 ```
 
-Открой http://localhost:3000
+## 7. API
 
-При локальной разработке без переменных KV приложение хранит данные в **памяти процесса** — этого достаточно, чтобы пощупать UI. После рестарта `next dev` всё обнуляется.
+| Метод | Путь | Назначение | Авторизация |
+|---|---|---|---|
+| POST | `/api/auth/request-code` | запросить код по номеру | — |
+| POST | `/api/auth/verify-code` | проверить код, выдать JWT | — |
+| POST | `/api/auth/logout` | сбросить cookie | — |
+| GET | `/api/me` | кто я | JWT cookie |
+| GET | `/api/sms/pending?max=10` | очередь для Android | `Bearer GATEWAY_TOKEN` |
+| POST | `/api/sms/sent` | отчёт об отправке | `Bearer GATEWAY_TOKEN` |
+| POST | `/api/gateway/heartbeat` | пинг от шлюза | `Bearer GATEWAY_TOKEN` |
+| GET | `/api/health` | проверка БД/Redis/очереди | — |
 
-### 1.2 Деплой на Vercel
+## 8. Безопасность
 
-1. Залей `web/` в репозиторий GitHub
-2. На vercel.com → New Project → импортируй репозиторий, root directory укажи `web`
-3. **Подключи KV:**
-   - В проекте Vercel → Storage → Create Database → KV
-   - Connect to Project → выбери все environments
-   - Переменные `KV_*` пропишутся автоматически
-4. **Добавь env vars:**
-   - `JWT_SECRET` — любая длинная случайная строка (32+ символа)
-   - `GATEWAY_TOKEN` — другая длинная случайная строка (это пароль для Android)
-5. Redeploy
+- JWT в **httpOnly** cookie, `sameSite=lax`, `secure` в production
+- Gateway-эндпоинты защищены отдельным `GATEWAY_TOKEN` (не равен пользовательскому JWT)
+- Коды живут в Redis с автоматическим TTL — не нужно чистить вручную
+- Нормализация номера (`+7…`) предотвращает обход лимитов через разные форматы
+- Rate-limit по номеру и по IP, плюс автобан за брутфорс кода
+- Audit-log на каждое событие (`code_requested`, `code_verified`, `code_failed`, `banned`)
+- Security headers: HSTS (если HTTPS), X-Frame-Options, CSP, Referrer-Policy
+- Android: входящие звонки отклоняются `CallScreeningService` — не мешают отправке СМС
 
-Сгенерировать секреты:
+## 9. База данных
+
+Схема в `web/lib/db/schema.ts`, миграции в `web/drizzle/`.
+
+```
+users(id, phone unique, createdAt, lastLoginAt, isBanned)
+auth_log(id, userId, phone, ip, userAgent, event, createdAt)
+banned_ips(ip pk, reason, bannedUntil, createdAt)
+gateway_devices(deviceId pk, lastSeenAt, batteryLevel, signalStrength, simInfo)
+sms_log(id, taskId, phone, success, error, deviceId, createdAt)
+```
+
+Изменение схемы:
+
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+cd web
+npm run db:generate    # после правки lib/db/schema.ts
+npm run db:migrate     # накатить
 ```
 
-## 2. Сборка Android-приложения
+## 10. Бэкапы
 
-### 2.1 Требования
+В compose-стеке `db-backup` каждый час запускает `pg_dump | gzip` → `/backups/smsvxod-YYYYMMDD-HHMMSS.sql.gz`, и удаляет файлы старше 7 дней.
 
-- Android Studio Hedgehog (2023.1.1) или новее
-- JDK 17
+Достать вручную:
 
-### 2.2 Сборка
-
-1. Открой Android Studio → Open → выбери папку `android/`
-2. Дождись синхронизации Gradle (первый раз качает зависимости)
-3. Подключи Android-телефон по USB, включи отладку по USB
-4. Run ▶ — Android Studio установит и запустит приложение
-
-Альтернатива — собрать APK без IDE:
 ```bash
-cd android
-./gradlew assembleDebug
-# APK будет в app/build/outputs/apk/debug/app-debug.apk
+docker compose cp db-backup:/backups ./backups
 ```
 
-### 2.3 Настройка на телефоне
+Восстановление:
 
-1. В приложении введи:
-   - **URL сервера** — `https://your-app.vercel.app` (без слеша на конце)
-   - **Gateway-токен** — тот же `GATEWAY_TOKEN`, что задан на Vercel
-   - **Интервал опроса** — 3 секунды (по умолчанию)
-2. Нажми «Запустить» — система запросит разрешение на отправку СМС
-3. Появится постоянное уведомление «SmsVxod Gateway». Не сворачивай его
+```bash
+gunzip -c backups/smsvxod-YYYYMMDD-HHMMSS.sql.gz \
+  | docker compose exec -T postgres psql -U smsvxod -d smsvxod
+```
 
-Приложение автоматически запустится при перезагрузке телефона, если хотя бы раз был нажат «Запустить».
+## 11. Алерты через ntfy
 
-### 2.4 Важно для надёжной работы шлюза
+Когда `ntfy`-сервис поднят (`make up` без override), сервер шлёт push на `NTFY_TOPIC` при:
+- gateway не пинговал >60 сек
+- очередь >100 задач
+- success rate СМС <90% за 5 минут
+- ошибки серверной части
 
-- **Отключи оптимизацию батареи** для приложения: Настройки → Приложения → SmsVxod Gateway → Батарея → «Без ограничений»
-- Телефон должен быть постоянно на зарядке и подключён к интернету
-- Симка должна быть активна (положительный баланс)
+На телефоне:
+1. Поставь приложение **ntfy** (App Store / Google Play / F-Droid)
+2. Подпишись на `http://<ip-компьютера>:8888/<NTFY_TOPIC>`
 
-## 3. Как это работает
+Без ntfy (как сейчас в `docker-compose.override.yml`) — алерты идут в stdout сервера.
 
-### Запрос кода
+## 12. Деплой в продакшен
 
-1. Юзер вводит номер на сайте → `POST /api/auth/request-code`
-2. Бэк нормализует номер (`+79991234567`), проверяет rate-limit
-3. Генерирует 6-значный код, кладёт в KV с TTL 5 минут
-4. Помещает задачу в очередь `sms:queue`
+Этот проект задуман для локального запуска. Когда понадобится продакшен:
 
-### Отправка
-
-5. Android-приложение раз в 3 сек делает `GET /api/sms/pending`
-6. Получает массив задач, для каждой вызывает `SmsManager.sendTextMessage()`
-7. После отправки шлёт `POST /api/sms/sent` с результатами
-
-### Проверка кода
-
-8. Юзер вводит код → `POST /api/auth/verify-code`
-9. Бэк сверяет, при успехе выдаёт JWT в httpOnly cookie на 7 дней
-10. Редирект на `/success`
-
-## 4. Лимиты (rate-limit)
-
-| Ограничение | Лимит |
-|---|---|
-| Повторная отправка СМС на номер | не чаще 1 раза в 60 сек |
-| Запросов СМС на номер | максимум 5 в час |
-| Запросов СМС с одного IP | максимум 20 в час |
-| Попыток ввода кода | 3, потом код инвалидируется |
-| Время жизни кода | 5 минут |
-| Время жизни сессии | 7 дней |
-
-Параметры — в [web/lib/rate-limit.ts](web/lib/rate-limit.ts) и [web/lib/codes.ts](web/lib/codes.ts).
-
-## 5. Безопасность
-
-- JWT в **httpOnly** cookie + `sameSite=lax` + `secure` в продакшене
-- Gateway-эндпоинты (`/api/sms/*`) защищены Bearer-токеном, разделённым с пользовательским JWT
-- Коды хранятся в KV с автоматическим TTL — не нужно чистить вручную
-- Phone normalization предотвращает обход лимитов через разные форматы одного номера
-- Rate-limit И по номеру, И по IP — защита от спама и от перебора номеров
-
-## 6. Что можно улучшить (если понадобится)
-
-- Хранить пользователей в Vercel Postgres (сейчас сессия — это просто номер в JWT, отдельной таблицы users нет)
-- Добавить таблицу `audit_log` для аудита входов
-- Сменить `console.log` в `/api/sms/sent` на запись в БД, чтобы видеть статистику отправок
-- На Android: вторая симка / выбор симки, если в телефоне их несколько
-- Кастомизация шаблона СМС (сейчас зашит в `/api/auth/request-code`)
+1. **VPS** — Hetzner / Selectel / TimeWeb, от ~300 ₽/мес
+2. Открой 80/443 и закрой остальное (ufw)
+3. SSH: ключи-only, отключи пароль, fail2ban
+4. Перед `docker compose up -d`:
+   - удали `docker-compose.override.yml`
+   - сгенерируй сильные секреты (`make init` или вручную)
+   - добавь reverse-proxy (Caddy или Nginx) с автоматическим HTTPS (Let's Encrypt)
+   - подними домен на сервер
+5. Включи бэкапы `db-backup` (уже в compose) и настрой выгрузку дампов наружу (rsync на NAS или второй VPS)
+6. Добавь алерты в ntfy с реального телефона
 
 ## Файлы по полочкам
 
-**Backend:**
-- [web/app/api/auth/request-code/route.ts](web/app/api/auth/request-code/route.ts) — запрос кода
-- [web/app/api/auth/verify-code/route.ts](web/app/api/auth/verify-code/route.ts) — проверка кода
-- [web/app/api/sms/pending/route.ts](web/app/api/sms/pending/route.ts) — выдача задач Android-у
-- [web/app/api/sms/sent/route.ts](web/app/api/sms/sent/route.ts) — отчёт от Android-а
-- [web/lib/rate-limit.ts](web/lib/rate-limit.ts) — все лимиты
-- [web/lib/auth.ts](web/lib/auth.ts) — JWT
-- [web/middleware.ts](web/middleware.ts) — защита `/success`
-
-**Frontend:**
-- [web/app/page.tsx](web/app/page.tsx) — ввод номера
-- [web/app/verify/page.tsx](web/app/verify/page.tsx) — ввод кода
-- [web/app/success/page.tsx](web/app/success/page.tsx) — экран успеха
+**Web:**
+- [web/app/api/auth/request-code/route.ts](web/app/api/auth/request-code/route.ts)
+- [web/app/api/auth/verify-code/route.ts](web/app/api/auth/verify-code/route.ts)
+- [web/app/api/sms/pending/route.ts](web/app/api/sms/pending/route.ts)
+- [web/app/api/gateway/heartbeat/route.ts](web/app/api/gateway/heartbeat/route.ts)
+- [web/app/api/health/route.ts](web/app/api/health/route.ts)
+- [web/lib/kv.ts](web/lib/kv.ts), [web/lib/db/index.ts](web/lib/db/index.ts)
+- [web/lib/rate-limit.ts](web/lib/rate-limit.ts), [web/lib/auth.ts](web/lib/auth.ts)
+- [web/lib/users.ts](web/lib/users.ts), [web/lib/audit.ts](web/lib/audit.ts), [web/lib/bans.ts](web/lib/bans.ts)
+- [web/middleware.ts](web/middleware.ts)
 
 **Android:**
-- [android/app/src/main/java/com/smsvxod/gateway/MainActivity.kt](android/app/src/main/java/com/smsvxod/gateway/MainActivity.kt) — UI
-- [android/app/src/main/java/com/smsvxod/gateway/GatewayService.kt](android/app/src/main/java/com/smsvxod/gateway/GatewayService.kt) — Foreground Service с polling
-- [android/app/src/main/java/com/smsvxod/gateway/SmsSender.kt](android/app/src/main/java/com/smsvxod/gateway/SmsSender.kt) — обёртка над `SmsManager`
-- [android/app/src/main/java/com/smsvxod/gateway/GatewayApi.kt](android/app/src/main/java/com/smsvxod/gateway/GatewayApi.kt) — HTTP-клиент
+- [android/app/src/main/java/com/smsvxod/gateway/MainActivity.kt](android/app/src/main/java/com/smsvxod/gateway/MainActivity.kt)
+- [android/app/src/main/java/com/smsvxod/gateway/GatewayService.kt](android/app/src/main/java/com/smsvxod/gateway/GatewayService.kt)
+- [android/app/src/main/java/com/smsvxod/gateway/SmsSender.kt](android/app/src/main/java/com/smsvxod/gateway/SmsSender.kt)
+- [android/app/src/main/java/com/smsvxod/gateway/CallBlockerService.kt](android/app/src/main/java/com/smsvxod/gateway/CallBlockerService.kt)
+- [android/app/src/main/java/com/smsvxod/gateway/AutostartHelper.kt](android/app/src/main/java/com/smsvxod/gateway/AutostartHelper.kt)
+- [android/app/src/main/java/com/smsvxod/gateway/Heartbeat.kt](android/app/src/main/java/com/smsvxod/gateway/Heartbeat.kt)
+
+**DevOps:**
+- [docker-compose.yml](docker-compose.yml), [docker-compose.override.yml](docker-compose.override.yml)
+- [Makefile](Makefile), [scripts/backup.sh](scripts/backup.sh)
+- [.github/workflows/](.github/workflows/)
