@@ -32,7 +32,7 @@ init:
 		echo "Created $(ENV_FILE) from $(ENV_EXAMPLE)."; \
 	fi
 	@echo "Filling in missing secrets..."
-	@for key in JWT_SECRET GATEWAY_TOKEN ALTCHA_HMAC_KEY; do \
+	@for key in JWT_SECRET GATEWAY_TOKEN; do \
 		current=$$(grep -E "^$$key=" "$(ENV_FILE)" | sed -e "s/^$$key=//"); \
 		if [ -z "$$current" ]; then \
 			value=$$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"); \

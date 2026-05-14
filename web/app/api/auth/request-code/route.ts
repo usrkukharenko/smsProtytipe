@@ -3,7 +3,6 @@ import { normalizePhone } from "@/lib/phone";
 import { checkRequestCodeLimits, getClientIp } from "@/lib/rate-limit";
 import { generateCode, saveCode } from "@/lib/codes";
 import { enqueueSms } from "@/lib/sms-queue";
-import { verifySolution } from "@/lib/altcha";
 import { isIpBanned } from "@/lib/bans";
 import { logAuthEvent } from "@/lib/audit";
 import { upsertUser } from "@/lib/users";
@@ -20,20 +19,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Доступ заблокирован" }, { status: 403 });
     }
 
-    let body: { phone?: string; altcha?: string };
+    let body: { phone?: string };
     try {
       body = await req.json();
     } catch {
       return NextResponse.json(
         { error: "Некорректный запрос" },
-        { status: 400 }
-      );
-    }
-
-    const altchaOk = body.altcha ? await verifySolution(body.altcha) : false;
-    if (!altchaOk) {
-      return NextResponse.json(
-        { error: "Не пройдена проверка captcha" },
         { status: 400 }
       );
     }

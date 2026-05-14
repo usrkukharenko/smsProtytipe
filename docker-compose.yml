@@ -74,7 +74,6 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       GATEWAY_TOKEN: ${GATEWAY_TOKEN}
-      ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY}
       NTFY_URL: http://ntfy
       NTFY_TOPIC: ${NTFY_TOPIC:-smsvxod-alerts}
       PUBLIC_URL: http://localhost:3000
@@ -98,7 +97,6 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       GATEWAY_TOKEN: ${GATEWAY_TOKEN}
-      ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY}
       NTFY_URL: http://ntfy
       NTFY_TOPIC: ${NTFY_TOPIC:-smsvxod-alerts}
       PUBLIC_URL: http://localhost:3000

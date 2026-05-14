@@ -12,7 +12,6 @@ export default defineConfig({
     env: {
       JWT_SECRET: "playwright_secret_min_16_chars_long",
       GATEWAY_TOKEN: "playwright_gateway_token",
-      ALTCHA_HMAC_KEY: "playwright_altcha_key",
       DATABASE_URL: "postgres://x:x@localhost:5432/x",
       REDIS_URL: "redis://localhost:6379",
     },
