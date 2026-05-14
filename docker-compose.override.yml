@@ -1,0 +1,16 @@
+# Local override: expose Postgres + Redis to host so `npm run dev` can connect.
+# (Docker Hub is currently rate-limiting/TLS-timing-out, so we don't pull
+# node:20-alpine and skip the `web` and `ntfy` containers.)
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+  redis:
+    ports:
+      - "6379:6379"
+  web:
+    profiles: ["disabled"]
+  ntfy:
+    profiles: ["disabled"]
+  db-backup:
+    profiles: ["disabled"]

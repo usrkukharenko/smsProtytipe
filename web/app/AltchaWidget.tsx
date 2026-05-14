@@ -9,6 +9,14 @@ type Props = {
 export default function AltchaWidget({ onSolved }: Props) {
   const ref = useRef<HTMLElement | null>(null);
 
+  // Register the <altcha-widget> custom element on the client.
+  // Using a dynamic import (inside effect) keeps it out of SSR.
+  useEffect(() => {
+    import("altcha").catch(() => {
+      /* widget will simply not render — caller already handles disabled-submit state */
+    });
+  }, []);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;

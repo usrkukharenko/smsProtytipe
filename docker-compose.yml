@@ -2,7 +2,7 @@ name: smsvxod
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: smsvxod
@@ -107,7 +107,7 @@ services:
       - smsvxod_net
 
   db-backup:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     restart: unless-stopped
     depends_on:
       - postgres

@@ -30,5 +30,20 @@ export function getDb() {
   return db;
 }
 
-export const db = getDb();
+// Lazy proxy — the real client is created on first method call, not on import.
+// This keeps `next build` happy when Postgres isn't reachable. Methods are
+// bound to the real db so drizzle's `this`-aware methods still work.
+export const db = new Proxy(
+  {} as ReturnType<typeof drizzle<typeof schema>>,
+  {
+    get(_target, prop) {
+      const real = getDb();
+      const value = (real as unknown as Record<PropertyKey, unknown>)[prop];
+      return typeof value === "function"
+        ? (value as (...args: unknown[]) => unknown).bind(real)
+        : value;
+    },
+  }
+);
+
 export { schema };

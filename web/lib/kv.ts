@@ -9,7 +9,9 @@ function getClient(): Redis {
 
   const url = process.env.REDIS_URL ?? "redis://localhost:6379";
   const client = new Redis(url, {
-    lazyConnect: false,
+    // Don't open the TCP connection until the first command — keeps
+    // `next build` (and unit tests) from crashing when Redis is unreachable.
+    lazyConnect: true,
     maxRetriesPerRequest: 3,
     enableReadyCheck: true,
   });
@@ -23,11 +25,22 @@ function getClient(): Redis {
   return client;
 }
 
-export const redis = getClient();
+// Lazy proxy — the real client is constructed on first command,
+// so `next build` won't fail when Redis isn't reachable yet.
+// Methods are bound to the real client to keep ioredis's `this` happy.
+export const redis = new Proxy({} as Redis, {
+  get(_target, prop) {
+    const real = getClient();
+    const value = (real as unknown as Record<PropertyKey, unknown>)[prop];
+    return typeof value === "function"
+      ? (value as (...args: unknown[]) => unknown).bind(real)
+      : value;
+  },
+});
 
 export const kv = {
   async get<T>(key: string): Promise<T | null> {
-    const raw = await redis.get(key);
+    const raw = await getClient().get(key);
     if (raw === null) return null;
     try {
       return JSON.parse(raw) as T;
@@ -44,34 +57,34 @@ export const kv = {
     const payload =
       typeof value === "string" ? value : JSON.stringify(value);
     if (opts?.ex) {
-      await redis.set(key, payload, "EX", opts.ex);
+      await getClient().set(key, payload, "EX", opts.ex);
     } else {
-      await redis.set(key, payload);
+      await getClient().set(key, payload);
     }
   },
 
   async del(key: string): Promise<void> {
-    await redis.del(key);
+    await getClient().del(key);
   },
 
   async incr(key: string): Promise<number> {
-    return await redis.incr(key);
+    return await getClient().incr(key);
   },
 
   async expire(key: string, ttlSeconds: number): Promise<void> {
-    await redis.expire(key, ttlSeconds);
+    await getClient().expire(key, ttlSeconds);
   },
 
   async ttl(key: string): Promise<number> {
-    return await redis.ttl(key);
+    return await getClient().ttl(key);
   },
 
   async rpush(key: string, value: string): Promise<number> {
-    return await redis.rpush(key, value);
+    return await getClient().rpush(key, value);
   },
 
   async lpop(key: string, count: number): Promise<string[]> {
-    const result = await redis.lpop(key, count);
+    const result = await getClient().lpop(key, count);
     if (!result) return [];
     return Array.isArray(result) ? result : [result];
   },

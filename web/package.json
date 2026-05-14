@@ -12,6 +12,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "altcha": "^3.0.9",
     "altcha-lib": "^1.2.0",
     "drizzle-orm": "^0.36.4",
     "ioredis": "^5.4.1",
